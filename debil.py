@@ -22,6 +22,10 @@ ytdl_format_options = {
     "default_search": "auto",
     "source_address": "0.0.0.0",  # bind to ipv4 since ipv6 addresses cause issues sometimes
 }
+ffmpeg_options = {
+    "options": "-vn",
+}
+
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
@@ -52,12 +56,18 @@ async def on_message(message):
                     and len(params) > 1
                 ):
                     print("playing", params[1])
+                    if not client.voice_clients:
+                        await czanel.connect()
+
                     loop = asyncio.get_event_loop()
                     data = await loop.run_in_executor(
-                        None, lambda: ytdl.extract_info(params[1]), download=False
+                        None, lambda: ytdl.extract_info(params[1], download=True)
                     )
-
-                    await czanel.connect()
+                    filename = ytdl.prepare_filename(data)
+                    client.voice_clients[0].play(
+                        discord.FFmpegPCMAudio(filename, **ffmpeg_options),
+                        after=lambda e: print(f"Player error: {e}") if e else None,
+                    )
 
         await message.channel.send("Przyjąłem")
 
