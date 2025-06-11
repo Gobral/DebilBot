@@ -73,7 +73,8 @@ def empty_queue():
 
 
 def stop_voice_clients():
-    client.voice_clients[0].stop()
+    if client.voice_clients:
+        client.voice_clients[0].stop()
 
 
 @client.event
