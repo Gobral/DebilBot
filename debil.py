@@ -1,5 +1,4 @@
 import discord
-from discord.ext import commands
 from dotenv import load_dotenv
 import os
 import yt_dlp
@@ -27,6 +26,7 @@ ffmpeg_options = {
     "options": "-vn",
 }
 
+prefix_return_message = "Przyjąłem"
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
@@ -35,12 +35,52 @@ intents.message_content = True
 
 client = discord.Client(intents=intents)
 
-playback_queue = []
+playback_queue = asyncio.Queue()
+players = []
+
+
+async def player():
+    while True:
+        music, channel = await playback_queue.get()
+        while client.voice_clients[0].is_playing():
+            await asyncio.sleep(2)
+
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(
+            None,
+            lambda: ytdl.extract_info(music, download=False),
+        )
+        filename = data["url"]
+        client.voice_clients[0].play(
+            discord.FFmpegPCMAudio(filename, **ffmpeg_options),
+            after=lambda e: print(f"Player error: {e}") if e else None,
+        )
+        await channel.send(f"{prefix_return_message}, gramy {data['title']}")
+
+
+def recreate_players():
+    for p in players:
+        p.cancel()
+    players.clear()
+    new_player = asyncio.create_task(player())
+    players.append(new_player)
+
+
+def empty_queue():
+    while not playback_queue.empty():
+        playback_queue.get_nowait()
+        playback_queue.task_done()
+
+
+def stop_voice_clients():
+    client.voice_clients[0].stop()
 
 
 @client.event
 async def on_ready():
     print(f"We have logged in as {client.user}")
+    start_player = asyncio.create_task(player())
+    players.append(start_player)
 
 
 @client.event
@@ -50,7 +90,7 @@ async def on_message(message):
 
     if message.content.startswith("debilu"):
         params = re.sub(" +", " ", message.content).split(" ")
-        return_message = "Przyjąłem"
+        return_message = prefix_return_message
         if len(params) > 2:
             if params[1] == "play":
                 found_vc = False
@@ -63,27 +103,30 @@ async def on_message(message):
                             found_vc = True
                             if not client.voice_clients:
                                 await czanel.connect()
+                            playback_queue.put_nowait((params[2], message.channel))
 
-                            loop = asyncio.get_event_loop()
-                            data = await loop.run_in_executor(
-                                None,
-                                lambda: ytdl.extract_info(params[2], download=False),
-                            )
-                            filename = data["url"]
-                            return_message += f", gramy {data['title']}"
-                            client.voice_clients[0].play(
-                                discord.FFmpegPCMAudio(filename, **ffmpeg_options),
-                                after=lambda e: print(f"Player error: {e}")
-                                if e
-                                else None,
-                            )
                 if not found_vc:
                     return_message += (
                         ", odmawiam. Podłącz się wpierw do kanału głosowego."
                     )
+                    await message.channel.send(return_message)
+
         else:
-            return_message += ", tylko za mało argumentów masz."
-        await message.channel.send(return_message)
+            if len(params) > 1:
+                if params[1] == "stop":
+                    print("Stopping playback")
+                    empty_queue()
+                    recreate_players()
+                    stop_voice_clients()
+                    return_message += ", koniec zabawy."
+                    await message.channel.send(return_message)
+
+                elif params[1] == "next":
+                    stop_voice_clients()
+
+            else:
+                return_message += ", tylko za mało argumentów masz."
+                await message.channel.send(return_message)
 
 
 client.run(TOKEN)
