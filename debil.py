@@ -41,21 +41,38 @@ players = []
 
 async def player():
     while True:
-        music, channel = await playback_queue.get()
+        url, title, channel = await playback_queue.get()
         while client.voice_clients[0].is_playing():
             await asyncio.sleep(2)
 
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(
-            None,
-            lambda: ytdl.extract_info(music, download=False),
-        )
-        filename = data["url"]
         client.voice_clients[0].play(
-            discord.FFmpegPCMAudio(filename, **ffmpeg_options),
+            discord.FFmpegPCMAudio(url, **ffmpeg_options),
             after=lambda e: print(f"Player error: {e}") if e else None,
         )
-        await channel.send(f"{prefix_return_message}, gramy {data['title']}")
+        await channel.send(f"{prefix_return_message}, gramy {title}")
+
+
+async def add_music(music, channel):
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(
+        None,
+        lambda: ytdl.extract_info(music, download=False),
+    )
+    if "entries" in data:
+        await channel.send(
+            f"{prefix_return_message}, dodaję {data['title']}, liczba tracków: {len(data['entries'])}"
+        )
+        for e in data["entries"]:
+            url = e["url"]
+            title = e["title"]
+            playback_queue.put_nowait((url, title, channel))
+
+        return False
+
+    url = data["url"]
+    title = data["title"]
+    playback_queue.put_nowait((url, title, channel))
+    return True
 
 
 def recreate_players():
@@ -104,13 +121,17 @@ async def on_message(message):
                             found_vc = True
                             if not client.voice_clients:
                                 await czanel.connect()
-                            playback_queue.put_nowait((params[2], message.channel))
+
+                            await add_music(params[2], message.channel)
 
                 if not found_vc:
                     return_message += (
                         ", odmawiam. Podłącz się wpierw do kanału głosowego."
                     )
                     await message.channel.send(return_message)
+            else:
+                return_message = "Nie przyjąłem, co ty do mnie mówisz człowieku."
+                await message.channel.send(return_message)
 
         else:
             if len(params) > 1:
@@ -123,7 +144,14 @@ async def on_message(message):
                     await message.channel.send(return_message)
 
                 elif params[1] == "next":
+                    if playback_queue.empty():
+                        return_message += ", to już koniec kolejki."
+                        await message.channel.send(return_message)
                     stop_voice_clients()
+
+                else:
+                    return_message = "Nie przyjąłem, co ty do mnie mówisz człowieku."
+                    await message.channel.send(return_message)
 
             else:
                 return_message += ", tylko za mało argumentów masz."
